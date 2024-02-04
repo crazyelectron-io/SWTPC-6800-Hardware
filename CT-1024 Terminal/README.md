@@ -1,0 +1,3 @@
+# CT-1024
+
+SWTPC CT-1024 Terminal
