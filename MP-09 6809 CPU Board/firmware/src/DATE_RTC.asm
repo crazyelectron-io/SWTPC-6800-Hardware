@@ -1,0 +1,325 @@
+ OPT PAG
+ TTL DATE UTILITY
+ PAG
+*
+* SET AND EXAMINE DATE
+*
+* COPYRIGHT (C) 1978 BY
+*
+* TECHNICAL SYSTEMS CONSULTANTS, INC.
+* P.O. BOX 2574
+* WEST LAFAYETTE, INDIANA 47906
+* (317) 423-5465
+*
+* Fixed for Y2K - Michael Holley DEC 13, 2001
+*
+* Use Dallas Semi Timekeeping RAM Mar 24, 2004
+*
+* DS1642 Register Map
+* Address B7 B6 B5 B4 B3 B2 B1 B0     Function
+*   7FF    -  -  -  -  -  -  -  -  Year    00-99
+*   7FE    X  X  X  -  -  -  -  -  Month   00-12
+*   7FD    X  X  -  -  -  -  -  -  Date    00-31
+*   7FC    X  FT X  X  X  -  -  -  Day     00-07
+*   7FB    X  X  -  -  -  -  -  -  Hour    00-23
+*   7FA    X  -  -  -  -  -  -  -  Minutes 00-59
+*   7F9   OSC -  -  -  -  -  -  -  Seconds 00-59
+*   7F8    W  R  X  X  X  X  X  X  Control   A
+*
+*  OSC = Stop Bit   R = Read Bit  W = Write Bit
+*  FT = Frequency Test  X Unused
+
+* GLOBAL VARIABLES
+
+EOL    EQU $CC02
+FCB    EQU $C840
+DATE   EQU $CC0E
+LSTTRM EQU $CC11
+FMSCLS EQU $D403
+FMS    EQU $D406
+WARMS  EQU $CD03
+GETCHR EQU $CD15
+PUTCHR EQU $CD18
+PSTRNG EQU $CD1E
+PCRLF  EQU $CD24
+OUTDEC EQU $CD39
+OUTHEX EQU $CD3C
+RPTERR EQU $CD3F
+GETHEX EQU $CD42
+INDEC  EQU $CD48
+
+ ORG $C100
+
+DATE0 BRA DATE1
+
+VN FCB 3 VERSION NUMBER
+RTC    FDB $F7F8
+VALUE  FDB 0
+YEAR   FCB 0
+MONTH  FCB 0
+DAY    FCB 0
+HOUR   FCB 0
+MINUTE FCB 0
+SECOND FCB 0
+
+DATE1 LDAA LSTTRM CHECK TERM CHAR
+ CMPA #$D IS IT CR?
+ BEQ PCKDAT Read RTC and Print Date
+ CMPA EOL IS IT EOL?
+ BEQ PCKDAT  Read RTC and Print Date
+* Get Date
+ LDA #12
+ JSR GETNUM
+ BCS DATE9
+ STAA MONTH
+  LDA #31
+ JSR GETNUM
+ BCS DATE9
+ STAA DAY
+  LDA #99
+ JSR GETNUM
+ BCS DATE9
+ STAA YEAR
+* Get Time
+ LDA #23
+ JSR GETNUM
+ BCS DATE9
+ STAA HOUR
+ LDA #59
+ JSR GETNUM
+ BCS DATE9
+ STAA MINUTE
+ LDA #59
+ JSR GETNUM
+ STAA SECOND
+
+ JSR SETRTC Transfer date/time to RTC
+ BRA PCKDAT Update FLEX date and return
+
+DATE9 LDX #FCB POINT TO FCB
+ LDAB #26 SET UP ERROR NUMBER
+ STAB 1,X STUFF IN FCB
+ JSR RPTERR REPORT ERROR
+ LDX #USAGE
+ JSR PSTRNG
+ JMP WARMS RETURN TO FLEX
+
+* PRINT DATE
+
+PCKDAT JSR GETRTC
+PDAT JSR PCRLF OUTPUT CR & LF
+ LDAA DATE GET MONTH
+ LDX #MONTHS POINT TO TABLE
+PDAT1 DECA CHECK DATE
+ BEQ PDAT3
+PDAT2 INX FIND MONTH STRING
+ TST 0,X
+ BNE PDAT2
+ INX
+ BRA PDAT1
+PDAT3 BSR PST GO PRINT IT
+ LDAA #$20 OUTPUT SPACE
+ JSR PUTCHR
+ CLR VALUE
+ LDAA DATE+1 GET DAY NUMBER
+ STAA VALUE+1
+ LDX #VALUE POINT TO IT
+ CLRB CLEAR FLAG
+ JSR OUTDEC PRINT DAY
+ LDX #CST POINT TO STRING
+ BSR PST PRINT IT
+
+* OUT YEAR
+*
+* Check for and convert full year
+*
+* 1975: $7B7 -> 75
+* 1999: $7CF -> 99
+*
+* 2000: $7D0 -> 0
+* 2047: $7FF -> 47
+*
+* 2048: $800 -> 48
+* 2074: $81A -> 74
+
+OUTY CLRB
+ LDAA DATE+2 GET YEAR
+ CMPA #75 Pivot year?
+ BHS OUTY2
+ ADDA #100 Next century
+OUTY2 ADDA #$6C Add 1900, $76C
+ ADCB #$07
+ LDX #VALUE Year storage
+ STAB 0,X
+ STAA 1,X
+ CLRB Suppress leading zeros
+ JSR OUTDEC PRINT YEAR
+ BSR PTIME
+ JMP WARMS RETURN TO FLEX
+
+* PRINT STRING
+
+PST LDAA 0,X GET CHARACTER
+ BEQ PST2 IS IT NULL?
+ JSR PUTCHR OUTPUT CHARACTER
+ INX BUMP TO NEXT
+ BRA PST REPEAT
+PST2 RTS
+
+* Print Time of Day
+*
+PTIME LDAA #$20 SPACE
+ JSR PUTCHR
+ LDX #HOUR
+ JSR OUTHEX PRINT HOUR
+ LDAA #':
+ JSR PUTCHR
+ LDX #MINUTE
+ JSR OUTHEX PRINT MINUTE
+ LDAA #':
+ JSR PUTCHR
+ LDX #SECOND
+ JSR OUTHEX PRINT SECOND
+ RTS
+
+* Get Date from RTC
+*
+GETRTC LDX RTC Base Address of Clock
+ LDAA #$40 Set Read bit to stop updates
+ STAA 0,X Store in RTC control register
+
+ LDAA 1,X Get Second
+ ANDA #$7F
+ STAA SECOND
+ LDAA 2,X Get Minute
+ ANDA #$7F
+ STAA MINUTE
+ LDAA 3,X Get Hour
+ ANDA #$3F
+ STAA HOUR
+
+ LDAA 5,X Get Day
+ ANDA #$3F
+ BSR  BCDBIN
+ STAA DATE+1 Save Day
+
+ LDAA 6,X Get Month
+ ANDA #$1F
+ BSR BCDBIN
+ STAA DATE Save Month
+
+ LDAA 7,X Get Year
+ BSR BCDBIN
+ STAA DATE+2 Save Year
+
+ LDAA #$00 Clear Read bit to stop updates
+ STAA 0,X Store in RTC control register
+ RTS
+
+* BCD TO BINARY
+*
+BCDBIN TAB COPY NUMBER
+ AND A #$0F Mask MSD
+ AND B #$F0 Mask LSD
+BCD1 BEQ BCD2
+ ADDA #10 Add Binary 10
+ SUBB #$10 Subtract BCD 10
+ BRA BCD1
+BCD2 RTS
+
+* Store Date in RTC
+*
+SETRTC LDX RTC Base Address of Clock
+ LDAA #$80 Set Write bit to stop updates
+ STAA 0,X Store in RTC control register
+
+ LDAA YEAR
+ STAA 7,X
+ LDAA MONTH
+ STAA 6,X
+ LDAA DAY
+ STAA 5,X
+
+ LDAA HOUR
+ STAA 3,X
+ LDAA MINUTE
+ STAA 2,X
+ LDAA SECOND
+ STAA 1,X
+
+ LDAA #$00 Clear Write bit to stop updates
+ STAA 0,X Store in RTC control registe
+ RTS
+
+* BINARY TO BCD - Numbers 0 to 99
+*
+BINBCD CLRB
+BIN1 CMPA #$9
+ BLE BIN2
+ ADDB #$10 Add BCD 10
+ SUBA #10 Subtract Binary 10
+ BRA BIN1
+BIN2 ABA
+ RTS
+
+* Get a decimal number from the command line.
+* On entry, maximum value in ACC A (0 - 99)
+* On exit, number in ACC A as 2 digit BCD
+* Carry set if number not found
+* X and B used
+TMPVAL RMB 2
+TMPMAX RMB 1
+GETNUM STAA TMPMAX
+ JSR INDEC
+ BCS GETNU3 No valid number
+ TSTB Is it comma
+ BNE GETNU1
+GETNU1 STX TMPVAL
+ TST TMPVAL MSB should be 0
+ BNE GETNU3 Too big
+ LDAA TMPVAL+1 Get number
+ CMPA TMPMAX
+ BHI GETNU3 Too big
+ BSR BINBCD
+ CLC
+ BRA GETNU4
+GETNU3 CLRA
+ SEC
+GETNU4 RTS
+
+* TEXT STRINGS
+
+CST FCC ", "
+ FCB 0
+
+USAGE FCC "USAGE: DATE MM,DD,YY,HH,MM,SS"
+ FCB 4
+
+* MONTH STRINGS
+
+MONTHS FCC 'JANUARY'
+ FCB 0
+ FCC 'FEBRUARY'
+ FCB 0
+ FCC 'MARCH'
+ FCB 0
+ FCC 'APRIL'
+ FCB 0
+ FCC 'MAY'
+ FCB 0
+ FCC 'JUNE'
+ FCB 0
+ FCC 'JULY'
+ FCB 0
+ FCC 'AUGUST'
+ FCB 0
+ FCC 'SEPTEMBER'
+ FCB 0
+ FCC 'OCTOBER'
+ FCB 0
+ FCC 'NOVEMBER'
+ FCB 0
+ FCC 'DECEMBER'
+ FCB 0
+
+ END DATE0
